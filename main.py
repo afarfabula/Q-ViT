@@ -34,6 +34,7 @@ import utils
 def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
     parser.add_argument('--batch-size', default=64, type=int)
+    parser.add_argument('--batch-size-eval', default=None, type=int)
     parser.add_argument('--epochs', default=300, type=int)
 
     # Model parameters
@@ -235,9 +236,10 @@ def main(args):
         drop_last=True,
     )
 
+    batch_size_eval = int(1.5 * args.batch_size) if args.batch_size_eval is None else int(args.batch_size_eval)
     data_loader_val = torch.utils.data.DataLoader(
         dataset_val, sampler=sampler_val,
-        batch_size=int(1.5 * args.batch_size),
+        batch_size=batch_size_eval,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=False
