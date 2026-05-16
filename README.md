@@ -36,6 +36,10 @@ When training 2/3 bits Q-ViT Deit-S, please change the model into 'twobits_deit_
 
   > python -m torch.distributed.launch --master_port=12345 --nproc_per_node=4 --use_env main.py --model fourbits_deit_small_patch16_224 --epochs 300 --warmup-epochs 0 --weight-decay 0. --batch-size 128  --data-path /mnt/lustre/share/images/ --lr 3e-4 --repeated-aug --output_dir ./dist_4bit_small_lamb_3e-4_300_512 --distillation-type hard --teacher-model vit_deit_small_distilled_patch16_224 --opt fusedlamb 
 
+### Train Swin-T (FP, timm):
+
+  > bash run_swin_tiny_fp_imnet_parquet_ddp.sh /path/to/imagenet_parquet /path/to/out_dir
+
 
 ## Evaluation: 
 
@@ -64,4 +68,3 @@ When training 2/3 bits Q-ViT Deit-S, please change the model into 'twobits_deit_
 
 
 Training codes and other models will be open-sourced successively.
-
