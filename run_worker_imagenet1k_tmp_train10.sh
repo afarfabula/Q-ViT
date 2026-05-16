@@ -28,9 +28,13 @@ echo "imagenet_dir=${IMNET_DIR}"
 echo "out_dir=${OUT_DIR}"
 echo "hf_endpoint=${HF_ENDPOINT}"
 
-if [ -z "${HF_TOKEN:-}" ] && [ -z "${HUGGINGFACE_HUB_TOKEN:-}" ]; then
+if [ -n "${HF_TOKEN:-}" ] && [ -z "${HUGGINGFACE_HUB_TOKEN:-}" ]; then
+  export HUGGINGFACE_HUB_TOKEN="${HF_TOKEN}"
+fi
+
+if [ -z "${HUGGINGFACE_HUB_TOKEN:-}" ]; then
   echo "missing_token=1"
-  echo "set env: HF_TOKEN or HUGGINGFACE_HUB_TOKEN"
+  echo "set env: HF_TOKEN"
   exit 2
 fi
 
