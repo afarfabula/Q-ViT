@@ -83,7 +83,7 @@ class Conv2dQ(_Conv2dQ):
         g = 1.0 / math.sqrt(self.weight.numel() * Qp)
 
         # Method1: 31GB GPU memory (AlexNet w4a4 bs 2048) 17min/epoch
-        alpha = grad_scale(self.alpha, g)
+        alpha = grad_scale(self.alpha, g).abs().clamp(min=1e-6)
         # print(alpha.shape)
         # print(self.weight.shape)
         alpha = alpha.unsqueeze(1).unsqueeze(2).unsqueeze(3)
@@ -119,7 +119,7 @@ class LinearQ(_LinearQ):
         g = 1.0 / math.sqrt(self.weight.numel() * Qp)
 
         # Method1:
-        alpha = grad_scale(self.alpha, g)
+        alpha = grad_scale(self.alpha, g).abs().clamp(min=1e-6)
         alpha = alpha.unsqueeze(1)
         w_q = round_pass((self.weight / alpha).clamp(Qn, Qp)) * alpha
 
@@ -169,7 +169,7 @@ class ActQ(_ActQ):
 
         # Method1:
         zero_point = (self.zero_point.round() - self.zero_point).detach() + self.zero_point
-        alpha = grad_scale(self.alpha, g)
+        alpha = grad_scale(self.alpha, g).abs().clamp(min=1e-6)
         zero_point = grad_scale(zero_point, g)
         # x = round_pass((x / alpha).clamp(Qn, Qp)) * alpha
         if len(x.shape)==2:

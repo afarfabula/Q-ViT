@@ -144,7 +144,7 @@ def get_args_parser():
     # Dataset parameters
     parser.add_argument('--data-path', default='/datasets01/imagenet_full_size/061417/', type=str,
                         help='dataset path')
-    parser.add_argument('--data-set', default='IMNET', choices=['CIFAR', 'IMNET', 'INAT', 'INAT19'],
+    parser.add_argument('--data-set', default='IMNET', choices=['CIFAR', 'IMNET', 'IMNET_PARQUET', 'INAT', 'INAT19'],
                         type=str, help='Image Net dataset path')
     parser.add_argument('--inat-category', default='name',
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
@@ -166,6 +166,14 @@ def get_args_parser():
     parser.add_argument('--no-pin-mem', action='store_false', dest='pin_mem',
                         help='')
     parser.set_defaults(pin_mem=True)
+    parser.add_argument('--max-train-steps', default=None, type=int)
+    parser.add_argument('--max-eval-steps', default=None, type=int)
+    parser.add_argument('--calibrate-steps', default=0, type=int)
+    parser.add_argument('--calibrate-split', default='train', choices=['train', 'validation'], type=str)
+
+    parser.add_argument('--torch-compile', action='store_true')
+    parser.add_argument('--torch-compile-mode', default='default', type=str)
+    parser.add_argument('--torch-compile-backend', default='inductor', type=str)
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
@@ -179,9 +187,6 @@ def main(args):
     # utils.setup_distributed()
 
     print(args)
-
-    if args.distillation_type != 'none' and args.finetune and not args.eval:
-        raise NotImplementedError("Finetuning with distillation not yet supported")
 
     device = torch.device(args.device)
 
@@ -304,7 +309,7 @@ def main(args):
 
     model_without_ddp = model
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
@@ -388,8 +393,31 @@ def main(args):
             if 'scaler' in checkpoint:
                 loss_scaler.load_state_dict(checkpoint['scaler'])
         lr_scheduler.step(args.start_epoch)
+
+    if args.torch_compile:
+        if args.distributed:
+            raise RuntimeError("torch.compile is only supported in non-distributed mode in this repo setup.")
+        try:
+            from torch import _dynamo
+            _dynamo.config.suppress_errors = True
+            model = torch.compile(model, mode=args.torch_compile_mode, backend=args.torch_compile_backend)
+            model_without_ddp = model
+            print(f"torch.compile enabled: backend={args.torch_compile_backend}, mode={args.torch_compile_mode}")
+        except Exception as e:
+            print(f"torch.compile failed, fallback to eager: {e}")
+
     if args.eval:
-        test_stats = evaluate(data_loader_val, model, device)
+        if args.calibrate_steps and args.calibrate_steps > 0:
+            calib_loader = data_loader_train if args.calibrate_split == 'train' else data_loader_val
+            model.train()
+            with torch.no_grad():
+                for i, (samples, _) in enumerate(calib_loader):
+                    if i >= args.calibrate_steps:
+                        break
+                    samples = samples.to(device, non_blocking=True)
+                    model(samples)
+            model.eval()
+        test_stats = evaluate(data_loader_val, model, device, max_steps=args.max_eval_steps)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
 
@@ -406,7 +434,8 @@ def main(args):
             model, teacher_model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
             args.clip_grad, model_ema, mixup_fn,
-            set_training_mode=args.finetune == ''  # keep in eval mode during finetuning
+            set_training_mode=True,
+            max_steps=args.max_train_steps,
         )
 
         lr_scheduler.step(epoch)
@@ -424,7 +453,7 @@ def main(args):
                 }, checkpoint_path)
              
 
-        test_stats = evaluate(data_loader_val, model, device)
+        test_stats = evaluate(data_loader_val, model, device, max_steps=args.max_eval_steps)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         
         if max_accuracy < test_stats["acc1"]:

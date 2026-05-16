@@ -9,10 +9,12 @@ import torch.nn.functional as F
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.helpers import load_pretrained
-from timm.models.layers import Mlp 
-from timm.models.layers.drop import DropPath
-from timm.models.layers.helpers import to_2tuple
-from timm.models.layers.weight_init import trunc_normal_
+try:
+    from timm.layers import Mlp, DropPath, to_2tuple, trunc_normal_
+except Exception:
+    from timm.models.layers import Mlp, DropPath
+    from timm.models.layers.helpers import to_2tuple
+    from timm.models.layers.weight_init import trunc_normal_
 from timm.models.resnet import resnet26d, resnet50d
 from timm.models.registry import register_model
 

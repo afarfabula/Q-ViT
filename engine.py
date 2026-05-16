@@ -20,15 +20,18 @@ def train_one_epoch(model: torch.nn.Module, teacher_model: torch.nn.Module, crit
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
                     model_ema: Optional[ModelEma] = None, mixup_fn: Optional[Mixup] = None,
-                    set_training_mode=True):
+                    set_training_mode=True, max_steps: Optional[int] = None):
     model.train(set_training_mode)
-    teacher_model.eval()
+    if teacher_model is not None:
+        teacher_model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
-    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+    for step, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+        if max_steps is not None and step >= max_steps:
+            break
         samples = samples.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
 
@@ -47,6 +50,8 @@ def train_one_epoch(model: torch.nn.Module, teacher_model: torch.nn.Module, crit
 
         optimizer.zero_grad()
         loss.backward()
+        if max_norm is not None and max_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
         optimizer.step()
 
         # this attribute is added by timm on one optimizer (adahessian)
@@ -67,7 +72,7 @@ def train_one_epoch(model: torch.nn.Module, teacher_model: torch.nn.Module, crit
 
 
 @torch.no_grad()
-def evaluate(data_loader, model, device):
+def evaluate(data_loader, model, device, max_steps: Optional[int] = None):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -76,7 +81,9 @@ def evaluate(data_loader, model, device):
     # switch to evaluation mode
     model.eval()
 
-    for images, target in metric_logger.log_every(data_loader, 10, header):
+    for step, (images, target) in enumerate(metric_logger.log_every(data_loader, 10, header)):
+        if max_steps is not None and step >= max_steps:
+            break
         images = images.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
 

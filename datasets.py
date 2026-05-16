@@ -2,7 +2,11 @@
 # All rights reserved.
 import os
 import json
+import glob
+from io import BytesIO
+from bisect import bisect_right
 
+import torch
 from torchvision import datasets, transforms
 from torchvision.datasets.folder import ImageFolder, default_loader
 
@@ -54,6 +58,79 @@ class INatDataset(ImageFolder):
     # __getitem__ and __len__ inherited from ImageFolder
 
 
+class ParquetImageNetDataset(torch.utils.data.Dataset):
+    """
+    Minimal parquet-backed ImageNet dataset for HF-style shards:
+    - train-*.parquet
+    - validation-*.parquet
+    """
+    def __init__(self, root, split, transform=None):
+        self.root = root
+        self.split = split
+        self.transform = transform
+
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as exc:
+            raise RuntimeError(
+                "pyarrow is required for parquet dataset. Install with: pip install pyarrow"
+            ) from exc
+
+        self._pq = pq
+        self.files = sorted(glob.glob(os.path.join(root, "data", f"{split}-*.parquet")))
+        if not self.files:
+            raise RuntimeError(
+                f"No parquet files found for split '{split}' under {os.path.join(root, 'data')}"
+            )
+
+        self._parquet_files = []
+        self._row_groups = []  # (file_index, row_group_index, num_rows)
+        cumulative = 0
+        self._cumulative_rows = []
+        for file_idx, path in enumerate(self.files):
+            pf = self._pq.ParquetFile(path)
+            self._parquet_files.append(pf)
+            for rg_idx in range(pf.num_row_groups):
+                num_rows = pf.metadata.row_group(rg_idx).num_rows
+                self._row_groups.append((file_idx, rg_idx, num_rows))
+                cumulative += num_rows
+                self._cumulative_rows.append(cumulative)
+
+        self._cache_key = None
+        self._cache_rows = None
+
+    def __len__(self):
+        return self._cumulative_rows[-1]
+
+    def _get_row_group(self, group_idx):
+        file_idx, rg_idx, _ = self._row_groups[group_idx]
+        cache_key = (file_idx, rg_idx)
+        if self._cache_key == cache_key and self._cache_rows is not None:
+            return self._cache_rows
+
+        table = self._parquet_files[file_idx].read_row_group(rg_idx, columns=["image", "label"])
+        rows = table.to_pylist()
+        self._cache_key = cache_key
+        self._cache_rows = rows
+        return rows
+
+    def __getitem__(self, index):
+        if index < 0 or index >= len(self):
+            raise IndexError(f"Index {index} out of range for dataset length {len(self)}")
+
+        group_idx = bisect_right(self._cumulative_rows, index)
+        prev_cum = 0 if group_idx == 0 else self._cumulative_rows[group_idx - 1]
+        row_idx = index - prev_cum
+        row = self._get_row_group(group_idx)[row_idx]
+
+        image_bytes = row["image"]["bytes"]
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+        if self.transform is not None:
+            image = self.transform(image)
+        label = int(row["label"])
+        return image, label
+
+
 def build_dataset(is_train, args):
     transform = build_transform(is_train, args)
 
@@ -63,6 +140,10 @@ def build_dataset(is_train, args):
     elif args.data_set == 'IMNET':
         root = os.path.join(args.data_path, 'train' if is_train else 'val')
         dataset = datasets.ImageFolder(root, transform=transform)
+        nb_classes = 1000
+    elif args.data_set == 'IMNET_PARQUET':
+        split = 'train' if is_train else 'validation'
+        dataset = ParquetImageNetDataset(args.data_path, split=split, transform=transform)
         nb_classes = 1000
     elif args.data_set == 'INAT':
         dataset = INatDataset(args.data_path, train=is_train, year=2018,

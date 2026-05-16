@@ -35,9 +35,12 @@ class DistillationLoss(torch.nn.Module):
         if not isinstance(outputs, torch.Tensor):
             # assume that the model outputs a tuple of [outputs, outputs_kd]
             outputs, outputs_kd = outputs
-        base_loss = self.base_criterion(outputs, labels)
         if self.distillation_type == 'none':
-            return base_loss
+            if outputs_kd is not None:
+                outputs = (outputs + outputs_kd) / 2
+            return self.base_criterion(outputs, labels)
+
+        base_loss = self.base_criterion(outputs, labels)
 
         if outputs_kd is None:
             raise ValueError("When knowledge distillation is enabled, the model is "
